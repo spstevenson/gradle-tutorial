@@ -1,0 +1,104 @@
+import com.manning.gia.ReleaseVersionTask
+import com.manning.gia.ProjectVersion
+import com.manning.gia.ReleaseVersionListener
+
+apply plugin: 'war'
+apply plugin: 'java'
+apply plugin: 'jetty'
+
+webAppDirName = 'webfiles'
+
+ext.versionFile = file('version.properties')
+
+task loadVersion {
+	project.version = readVersion()
+}
+
+def releaseVersionListener = new ReleaseVersionListener()
+gradle.taskGraph.addTaskExecutionGraphListener(releaseVersionListener)
+
+ProjectVersion readVersion() {
+	logger.quiet 'Reading the version file.'
+	
+	if(!versionFile.exists()) {
+		throw new GradleException("Required version file does not exist: $versionFile.canonicalPath")
+	}
+	
+	Properties versionProps = new Properties()
+	
+	versionFile.withInputStream { stream -> 
+		versionProps.load(stream)
+	}
+	
+	new ProjectVersion(versionProps.major.toInteger(), versionProps.minor.toInteger(), versionProps.release.toBoolean())
+}
+
+repositories {
+	mavenCentral()
+}
+
+dependencies {
+	providedCompile 'javax.servlet:servlet-api:2.5'
+	runtime 'javax.servlet:jstl:1.1.2'
+}
+
+war {
+	from 'static'
+}
+
+jettyRun {
+	httpPort = 9090
+	contextPath = 'todo'
+}
+
+task wrapper(type: Wrapper) {
+	gradleVersion = '3.0'
+}
+
+task printVersion(group: 'versioning', description: 'Prints project version') << {
+	logger.quiet "Version: $version"
+}
+
+task release << {
+	println 'Releasing...'
+}
+
+task createDistribution(type: Zip, dependsOn: release) {
+	from war.outputs.files
+	
+	from(sourceSets*.allSource) {
+		into 'src'
+	}
+	
+	from(rootDir) {	
+		include versionFile.name
+	}
+}
+
+tasks.addRule("Pattern: increment<Classifier>Version - Increments the project version classifier.") { String taskName ->
+	if(taskName.startsWith('increment') && taskName.endsWith('Version')) {
+		task(taskName) << {
+			String classifier = (taskName - 'increment' - 'Version').toLowerCase()
+			String currentVersion = version.toString()
+			
+			switch (classifier) {
+				case 'major':
+					++version.major
+					break
+				case 'minor':
+					++version.minor
+					break
+				default:
+					throw new GradleException("Invalid version type '$classifier'. Allowed types: ['Major', 'Minor']")
+			}
+		
+		
+			String newVersion = version.toString()
+			logger.info "Incrementing $classifier project version: $currentVersion -> $newVersion"
+		
+			ant.propertyfile(file: versionFile) {
+				entry(key: classifier, type: 'int', operation: '+', value: 1)
+			}
+		}
+	}
+}
